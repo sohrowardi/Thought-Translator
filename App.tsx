@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { translateThought } from './services/geminiService';
 import { Tone, HistoryEntry } from './types';
 import { SparklesIcon, CopyIcon, CheckIcon, TrashIcon, MicrophoneIcon, SpeakerWaveIcon, SpeakerXMarkIcon } from './components/icons';
@@ -20,6 +20,40 @@ if (recognition) {
   recognition.interimResults = true;
 }
 
+const languages = [
+    { name: 'English', code: 'en-US' },
+    { name: 'Spanish', code: 'es-ES' },
+    { name: 'French', code: 'fr-FR' },
+    { name: 'German', code: 'de-DE' },
+    { name: 'Italian', code: 'it-IT' },
+    { name: 'Japanese', code: 'ja-JP' },
+    { name: 'Korean', code: 'ko-KR' },
+    { name: 'Russian', code: 'ru-RU' },
+    { name: 'Chinese (Simplified)', code: 'zh-CN' },
+    { name: 'Arabic', code: 'ar-SA' },
+    { name: 'Bengali', code: 'bn-IN' },
+    { name: 'Czech', code: 'cs-CZ' },
+    { name: 'Danish', code: 'da-DK' },
+    { name: 'Dutch', code: 'nl-NL' },
+    { name: 'Finnish', code: 'fi-FI' },
+    { name: 'Greek', code: 'el-GR' },
+    { name: 'Hebrew', code: 'he-IL' },
+    { name: 'Hindi', code: 'hi-IN' },
+    { name: 'Hungarian', code: 'hu-HU' },
+    { name: 'Indonesian', code: 'id-ID' },
+    { name: 'Norwegian', code: 'no-NO' },
+    { name: 'Polish', code: 'pl-PL' },
+    { name: 'Portuguese', code: 'pt-PT' },
+    { name: 'Romanian', code: 'ro-RO' },
+    { name: 'Slovak', code: 'sk-SK' },
+    { name: 'Swedish', code: 'sv-SE' },
+    { name: 'Thai', code: 'th-TH' },
+    { name: 'Turkish', code: 'tr-TR' },
+    { name: 'Ukrainian', code: 'uk-UA' },
+    { name: 'Vietnamese', code: 'vi-VN' },
+];
+
+
 const App: React.FC = () => {
   const [input, setInput] = useState<string>('');
   const [output, setOutput] = useState<string>('');
@@ -32,7 +66,12 @@ const App: React.FC = () => {
   const [confirmClear, setConfirmClear] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
-  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+  const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState<boolean>(false);
+  const [languageSearch, setLanguageSearch] = useState('');
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const languageDropdownRef = useRef<HTMLDivElement>(null);
 
 
   // Load history from localStorage on mount
@@ -82,6 +121,37 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
   }, []);
+  
+    // Close language dropdown on outside click
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (languageDropdownRef.current && !languageDropdownRef.current.contains(event.target as Node)) {
+                setIsLanguageDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
+
+    // Load speech synthesis voices
+    useEffect(() => {
+        const loadVoices = () => {
+            const availableVoices = window.speechSynthesis.getVoices();
+            if (availableVoices.length > 0) {
+                setVoices(availableVoices);
+            }
+        };
+        // Voices often load asynchronously.
+        window.speechSynthesis.onvoiceschanged = loadVoices;
+        loadVoices(); // Initial attempt.
+
+        return () => {
+            window.speechSynthesis.onvoiceschanged = null;
+        };
+    }, []);
+
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || isLoading) return;
@@ -92,6 +162,11 @@ const App: React.FC = () => {
     if (isListening) {
       recognition?.stop();
       setIsListening(false);
+    }
+    // Stop any ongoing speech synthesis on new submission
+    if (isSpeaking) {
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
     }
 
     try {
@@ -121,7 +196,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [input, tone, outputLanguage, isLoading, isListening]);
+  }, [input, tone, outputLanguage, isLoading, isListening, isSpeaking]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -203,26 +278,29 @@ const App: React.FC = () => {
 
     if (output && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(output);
-      // Map language names to BCP 47 codes
-      const langCode = {
-        'English': 'en-US',
-        'Spanish': 'es-ES',
-        'French': 'fr-FR',
-        'German': 'de-DE',
-        'Italian': 'it-IT',
-        'Japanese': 'ja-JP',
-        'Korean': 'ko-KR',
-        'Russian': 'ru-RU',
-        'Chinese (Simplified)': 'zh-CN',
-      }[outputLanguage] || 'en-US';
+      const selectedLanguage = languages.find(lang => lang.name === outputLanguage);
+      const langCode = selectedLanguage ? selectedLanguage.code : 'en-US';
       
       utterance.lang = langCode;
+
+      // Find the best available voice for the selected language
+      const languageVoices = voices.filter(voice => voice.lang === langCode);
+      // Heuristic: Prefer non-local (often higher quality cloud-based) voices
+      const bestVoice = languageVoices.find(voice => !voice.localService) || languageVoices[0];
+
+      if (bestVoice) {
+          utterance.voice = bestVoice;
+      }
+      
       utterance.onend = () => setIsSpeaking(false);
       utterance.onerror = (e) => {
         console.error("Speech synthesis error", e);
-        setError("Sorry, text-to-speech is not available for this language.");
+        setError("Sorry, text-to-speech for this language is not available or failed to load.");
         setIsSpeaking(false);
       };
+      
+      // Stop any previous speech before starting a new one
+      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
       setIsSpeaking(true);
     } else {
@@ -231,16 +309,19 @@ const App: React.FC = () => {
   };
 
 
-  const languages = [
-    'English', 'Spanish', 'French', 'German', 'Italian', 'Japanese', 'Korean', 'Russian', 'Chinese (Simplified)'
-  ];
-
   const loadFromHistory = (entry: HistoryEntry) => {
     setInput(entry.input);
     setOutput(entry.output);
     setTone(entry.tone);
     setOutputLanguage(entry.outputLanguage);
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+    }
   };
+  
+  const filteredLanguages = languages.filter(lang => lang.name.toLowerCase().includes(languageSearch.toLowerCase()));
+
 
   return (
     <div className="bg-zinc-900 text-zinc-200 min-h-screen font-sans p-4 sm:p-6 lg:p-8">
@@ -309,15 +390,53 @@ const App: React.FC = () => {
                     <label htmlFor="language" className="block text-sm font-medium text-zinc-400 mb-2">
                         Output Language
                     </label>
-                    <select
-                        id="language"
-                        value={outputLanguage}
-                        onChange={(e) => setOutputLanguage(e.target.value)}
-                        className="w-full p-2.5 bg-zinc-700 border border-zinc-600 rounded-lg focus:ring-2 focus:ring-[#ff91af] focus:border-[#ff91af] transition-colors duration-200 appearance-none"
-                        style={{ background: 'url(\'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="white" viewBox="0 0 16 16"><path d="M8 12L2 6h12z"/></svg>\') no-repeat right 0.75rem center/10px 10px', paddingRight: '2.5rem' }}
-                    >
-                        {languages.map(lang => <option key={lang} value={lang}>{lang}</option>)}
-                    </select>
+                    <div className="relative" ref={languageDropdownRef}>
+                        <button
+                            type="button"
+                            onClick={() => setIsLanguageDropdownOpen(prev => !prev)}
+                            className="w-full p-2.5 bg-zinc-700 border border-zinc-600 rounded-lg focus:ring-2 focus:ring-[#ff91af] focus:border-[#ff91af] transition-colors duration-200 flex justify-between items-center text-left"
+                            aria-haspopup="listbox"
+                            aria-expanded={isLanguageDropdownOpen}
+                        >
+                            <span>{outputLanguage}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className={`transition-transform duration-200 ${isLanguageDropdownOpen ? 'rotate-180' : ''}`} viewBox="0 0 16 16">
+                                <path fillRule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
+                            </svg>
+                        </button>
+                        {isLanguageDropdownOpen && (
+                            <div className="absolute z-10 top-full mt-2 w-full bg-zinc-800 border border-zinc-600 rounded-lg shadow-lg">
+                                <div className="p-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Search language..."
+                                        value={languageSearch}
+                                        onChange={(e) => setLanguageSearch(e.target.value)}
+                                        className="w-full px-3 py-2 bg-zinc-900 border border-zinc-600 rounded-md focus:ring-1 focus:ring-[#ff91af] focus:border-[#ff91af]"
+                                        autoFocus
+                                    />
+                                </div>
+                                <ul className="max-h-60 overflow-y-auto" role="listbox">
+                                    {filteredLanguages.length > 0 ? filteredLanguages.map(lang => (
+                                        <li key={lang.code} role="option" aria-selected={outputLanguage === lang.name}>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setOutputLanguage(lang.name);
+                                                    setIsLanguageDropdownOpen(false);
+                                                    setLanguageSearch('');
+                                                }}
+                                                className={`w-full text-left px-4 py-2 transition-colors ${outputLanguage === lang.name ? 'bg-[#ff91af]/20 text-white' : 'hover:bg-zinc-700/50'}`}
+                                            >
+                                                {lang.name}
+                                            </button>
+                                        </li>
+                                    )) : (
+                                        <li className="px-4 py-2 text-zinc-500">No results found.</li>
+                                    )}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -406,9 +525,9 @@ const App: React.FC = () => {
                     <div className="mb-3">
                         <p className="text-sm text-zinc-400 truncate">"{entry.input}"</p>
                     </div>
-                    <div className="relative">
+                    <div className="relative group">
                         <p className="text-zinc-300 whitespace-pre-wrap text-sm line-clamp-3">{entry.output}</p>
-                        <div className="absolute -top-1 right-0 flex space-x-2 opacity-0 hover:opacity-100 transition-opacity">
+                        <div className="absolute -top-1 right-0 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleCopy(entry.output, entry.id); }}
                                 className="p-1.5 bg-zinc-600 hover:bg-zinc-500 rounded-full"
