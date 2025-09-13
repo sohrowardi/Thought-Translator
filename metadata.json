@@ -1,0 +1,7 @@
+{
+  "name": "Thought Translator",
+  "description": "An AI-powered application that refines messy thoughts, fragmented sentences, or multilingual text into clear, natural English while preserving the original meaning and tone.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
