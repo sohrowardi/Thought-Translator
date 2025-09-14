@@ -170,29 +170,30 @@ const App: React.FC = () => {
     }
 
     try {
-      const result = await translateThought(input, tone, outputLanguage);
-      setOutput(result);
+      const fullResult = await translateThought(input, tone, outputLanguage, (chunk) => {
+        setOutput(prev => prev + chunk);
+      });
       
-      // Automatically copy the result
-      if (result) {
-        navigator.clipboard.writeText(result);
+      if (fullResult) {
+        // Automatically copy the result
+        navigator.clipboard.writeText(fullResult);
         setCopiedId('current');
         setTimeout(() => setCopiedId(null), 2000);
-      }
 
-      const newEntry: HistoryEntry = {
-        id: new Date().toISOString(),
-        input,
-        output: result,
-        tone,
-        outputLanguage,
-        timestamp: Date.now(),
-      };
-      setHistory(prev => [newEntry, ...prev]);
+        const newEntry: HistoryEntry = {
+          id: new Date().toISOString(),
+          input,
+          output: fullResult,
+          tone,
+          outputLanguage,
+          timestamp: Date.now(),
+        };
+        setHistory(prev => [newEntry, ...prev]);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "An unexpected error occurred.";
       setError(message);
-      setOutput("Sorry, something went wrong. Please try again.");
+      setOutput(message);
     } finally {
       setIsLoading(false);
     }
@@ -466,7 +467,7 @@ const App: React.FC = () => {
               <div className="bg-zinc-800/50 p-6 rounded-xl shadow-lg border border-zinc-700">
                 <div className="flex justify-between items-center mb-3">
                     <h2 className="text-lg font-semibold text-zinc-300">Polished Version</h2>
-                    {output && (
+                    {output && !isLoading && (
                          <div className="flex items-center gap-x-2">
                              <button
                                  onClick={handleSpeak}

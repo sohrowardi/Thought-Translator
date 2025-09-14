@@ -16,27 +16,37 @@ const systemInstruction = `You are an expert thought translator. Your task is to
 6.  **Clarification:** If the user's input is too ambiguous or nonsensical to understand, respond ONLY with the phrase: "I'm not quite sure what you mean. Could you please provide a little more detail?"
 7.  **Direct Output:** Your entire response should ONLY be the refined text. Do not include any preambles, apologies, or explanations like "Here is the refined version:".`;
 
-export async function translateThought(text: string, tone: Tone, language: string): Promise<string> {
+export async function translateThought(text: string, tone: Tone, language: string, onChunk: (chunk: string) => void): Promise<string> {
   if (!text.trim()) {
     return "";
   }
   
-  try {
-    const userPrompt = `Tone: ${tone}\nOutput Language: ${language}\nTranslate the following thought:\n---\n${text}`;
+  const userPrompt = `Tone: ${tone}\nOutput Language: ${language}\nTranslate the following thought:\n---\n${text}`;
 
-    const response = await ai.models.generateContent({
+  try {
+    const responseStream = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
         contents: userPrompt,
         config: {
             systemInstruction: systemInstruction,
             temperature: 0.7,
             topP: 0.95,
+            thinkingConfig: { thinkingBudget: 0 },
         }
     });
 
-    return response.text.trim();
+    let fullResponse = "";
+    for await (const chunk of responseStream) {
+        const chunkText = chunk.text;
+        if(chunkText) {
+            fullResponse += chunkText;
+            onChunk(chunkText);
+        }
+    }
+    return fullResponse.trim();
+
   } catch (error) {
     console.error("Error calling Gemini API:", error);
-    return "Sorry, something went wrong while translating. Please try again.";
+    throw new Error("Sorry, something went wrong while translating. Please try again.");
   }
 }
